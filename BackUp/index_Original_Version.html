@@ -101,28 +101,6 @@
     background: var(--danger-light); color: var(--danger); border-radius: 10px;
     padding: 12px; font-size: 13px; margin: 16px 0;
   }
-
-  /* ============================================================
-     ADMIN MODULE — styles
-     ============================================================ */
-  .admin-link-btn {
-    background: var(--text); color: white; border: none; border-radius: 10px;
-    padding: 8px 12px; font-size: 12px; font-weight: 700; cursor: pointer;
-  }
-  .stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 4px; }
-  .stat-box { background: var(--accent-light); border-radius: 12px; padding: 14px; text-align: center; }
-  .stat-num { font-size: 26px; font-weight: 800; color: var(--accent); line-height: 1.1; }
-  .stat-label { font-size: 12px; color: var(--muted); margin-top: 4px; }
-  .admin-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-  .admin-table th, .admin-table td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); }
-  .admin-table th { color: var(--muted); font-weight: 700; text-transform: uppercase; font-size: 10px; letter-spacing: 0.04em; }
-  .trend-chart { display: flex; align-items: flex-end; gap: 4px; height: 80px; }
-  .trend-bar { flex: 1; background: var(--accent-light); border-radius: 3px 3px 0 0; position: relative; height: 100%; }
-  .trend-bar-fill { background: var(--accent); width: 100%; border-radius: 3px 3px 0 0; position: absolute; bottom: 0; }
-  .admin-back-btn {
-    background: transparent; color: var(--accent); border: 1px solid var(--border);
-    width: 100%; padding: 12px; border-radius: var(--radius); font-weight: 600; cursor: pointer; font-size: 14px; margin-top: 8px;
-  }
 </style>
 
 <script>
@@ -132,7 +110,6 @@
   const CLIENT_ID = '1087953047967-oi91huc3j0i0lojpsrapf6ltrti2o4ht.apps.googleusercontent.com';
   const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.appdata https://www.googleapis.com/auth/userinfo.email profile';
   const DRIVE_FILE_NAME = 'medication-tracker-data.json';
-  const ADMIN_EMAIL = 'mukunda.gogoi@gmail.com';
   // ============================
 
   const root = document.getElementById('app');
@@ -149,12 +126,6 @@
   let signInError = null;
   let tokenClient = null;
   let currentUser = null;
-
-  // ADMIN MODULE — view state
-  let currentView = 'main'; // 'main' | 'admin'
-  let adminLoading = false;
-  let adminError = null;
-  let adminStats = null;
 
   function todayKey() {
     const d = new Date();
@@ -214,7 +185,6 @@
     accessToken = null;
     loaded = false;
     currentUser = null;
-    currentView = 'main';
     render();
     tokenClient.requestAccessToken({ prompt: 'select_account' });
   }
@@ -228,7 +198,6 @@
     currentUser = null;
     medications = [];
     takenLog = {};
-    currentView = 'main';
     render();
   }
 
@@ -325,17 +294,14 @@
   }
 
   async function saveToDrive() {
-    if (driveFileId) {
-      try {
-        await writeDriveFile(driveFileId, { medications, takenLog });
-      } catch (e) {
-        console.error('Save failed', e);
-        signInError = 'Could not save to Google Drive. Your change is kept on screen but may not have synced.';
-        render();
-      }
+    if (!driveFileId) return;
+    try {
+      await writeDriveFile(driveFileId, { medications, takenLog });
+    } catch (e) {
+      console.error('Save failed', e);
+      signInError = 'Could not save to Google Drive. Your change is kept on screen but may not have synced.';
+      render();
     }
-    // ADMIN MODULE — mirror this save to shared storage so the admin dashboard can see it
-    await syncSharedUserData();
   }
 
   // ---------- Mutations ----------
@@ -443,12 +409,6 @@
       return;
     }
 
-    // ADMIN MODULE — branch to the dashboard view
-    if (currentView === 'admin') {
-      renderAdminDashboard();
-      return;
-    }
-
     const todaysMeds = medications.filter(isScheduledToday);
     const listHtml = todaysMeds.length
       ? todaysMeds.map(medRow).join('')
@@ -486,16 +446,10 @@
       <button class="toggle-form-btn" id="show-add-btn">+ Add a medication</button>
     `;
 
-    // ADMIN MODULE — show an "Admin Dashboard" entry point only to the admin account
-    const adminButtonHtml = isAdmin()
-      ? `<button class="admin-link-btn" id="open-admin-btn">Admin Dashboard</button>`
-      : '';
-
     const accountBarHtml = currentUser ? `
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;gap:8px;">
-        <div style="font-size:12px;color:var(--muted);min-width:0;">Signed in as <strong>${escapeHtml(currentUser.email || currentUser.name || '')}</strong></div>
-        <div style="display:flex;gap:8px;align-items:center;flex-shrink:0;">
-          ${adminButtonHtml}
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
+        <div style="font-size:12px;color:var(--muted);">Signed in as <strong>${escapeHtml(currentUser.email || currentUser.name || '')}</strong></div>
+        <div style="display:flex;gap:10px;">
           <button class="btn-undo" style="color:var(--accent);" id="switch-account-btn">Switch account</button>
           <button class="btn-undo" id="sign-out-btn">Sign out</button>
         </div>
@@ -540,265 +494,11 @@
     if (switchBtn) switchBtn.onclick = () => window.__medApp.switchAccount();
     const signOutBtn = document.getElementById('sign-out-btn');
     if (signOutBtn) signOutBtn.onclick = () => window.__medApp.signOut();
-    const adminBtn = document.getElementById('open-admin-btn');
-    if (adminBtn) adminBtn.onclick = () => window.__medApp.openAdminDashboard();
   }
-
-  /* ================================================================
-     ADMIN MODULE START
-     ----------------------------------------------------------------
-     Everything below is scoped to the admin dashboard. It is gated
-     to ADMIN_EMAIL and reads data other signed-in users have synced
-     to shared artifact storage (window.storage, shared: true).
-
-     IMPORTANT: each user's medications/takenLog otherwise live only
-     in that user's own private Google Drive appDataFolder, which no
-     other account (including this admin account) can read. Shared
-     storage is a side-channel written on every save specifically so
-     this dashboard can aggregate across users. It only works while
-     this page runs as a Claude artifact — if window.storage isn't
-     present, the dashboard says so instead of showing fake data.
-     ================================================================ */
-
-  function isAdmin() {
-    return !!(currentUser && currentUser.email &&
-      currentUser.email.toLowerCase() === ADMIN_EMAIL.toLowerCase());
-  }
-
-  function sharedStorageAvailable() {
-    return typeof window.storage !== 'undefined' && window.storage !== null;
-  }
-
-  async function syncSharedUserData() {
-    if (!currentUser || !currentUser.email) return;
-    if (!sharedStorageAvailable()) return; // no-op outside the Claude artifact environment
-    try {
-      await window.storage.set(
-        'medtracker-user:' + currentUser.email.toLowerCase(),
-        JSON.stringify({
-          email: currentUser.email,
-          medications,
-          takenLog,
-          updatedAt: new Date().toISOString()
-        }),
-        true // shared
-      );
-    } catch (e) {
-      console.error('Admin sync failed', e);
-    }
-  }
-
-  function openAdminDashboard() {
-    if (!isAdmin()) return;
-    currentView = 'admin';
-    adminStats = null;
-    adminError = null;
-    adminLoading = true;
-    render();
-    loadAdminStats();
-  }
-
-  function closeAdminDashboard() {
-    currentView = 'main';
-    render();
-  }
-
-  function dateKeyForDate(d) {
-    return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
-  }
-
-  function isScheduledOnDate(med, d) {
-    if (!med.frequency || med.frequency === 'daily') return true;
-    return (med.days || []).includes(d.getDay());
-  }
-
-  // Doses/week implied by a medication's recurring schedule
-  function weeklyDoseCount(med) {
-    if (!med.frequency || med.frequency === 'daily') return 7;
-    return (med.days || []).length;
-  }
-
-  async function loadAdminStats() {
-    if (!sharedStorageAvailable()) {
-      adminLoading = false;
-      adminError = 'Shared admin data isn\'t available in this environment (window.storage is missing). This dashboard only works when the app is running as a Claude artifact.';
-      render();
-      return;
-    }
-
-    try {
-      const listResult = await window.storage.list('medtracker-user:', true);
-      const keys = (listResult && listResult.keys) ? listResult.keys : [];
-
-      const users = [];
-      for (const k of keys) {
-        try {
-          const res = await window.storage.get(k, true);
-          if (res && res.value) users.push(JSON.parse(res.value));
-        } catch (e) { /* skip unreadable entry */ }
-      }
-
-      const uniqueMedSet = new Set();
-      const weeklyQtyMap = {};
-      const mostUsedMap = {};
-      let takenTotal30 = 0, scheduledTotal30 = 0;
-      const dailyTaken = {};
-      const dailySched = {};
-      const today = new Date();
-
-      const days14 = [];
-      for (let i = 13; i >= 0; i--) {
-        const d = new Date(today); d.setDate(today.getDate() - i);
-        days14.push(dateKeyForDate(d));
-      }
-      days14.forEach(k => { dailyTaken[k] = 0; dailySched[k] = 0; });
-
-      for (const u of users) {
-        const meds = u.medications || [];
-        const log = u.takenLog || {};
-
-        meds.forEach(m => {
-          const name = (m.name || '').trim();
-          if (name) uniqueMedSet.add(name);
-          weeklyQtyMap[name] = (weeklyQtyMap[name] || 0) + weeklyDoseCount(m);
-        });
-
-        for (let i = 29; i >= 0; i--) {
-          const d = new Date(today); d.setDate(today.getDate() - i);
-          const dk = dateKeyForDate(d);
-          meds.forEach(m => {
-            if (!isScheduledOnDate(m, d)) return;
-            scheduledTotal30++;
-            if (dailySched.hasOwnProperty(dk)) dailySched[dk]++;
-            const takenAt = log[dk] && log[dk][m.id];
-            if (takenAt) {
-              takenTotal30++;
-              if (dailyTaken.hasOwnProperty(dk)) dailyTaken[dk]++;
-              const name = (m.name || '').trim();
-              if (name) mostUsedMap[name] = (mostUsedMap[name] || 0) + 1;
-            }
-          });
-        }
-      }
-
-      const uniqueMedicines = Array.from(uniqueMedSet).sort((a, b) => a.localeCompare(b));
-      const weeklyQuantities = Object.keys(weeklyQtyMap)
-        .sort((a, b) => a.localeCompare(b))
-        .map(name => ({ name, qty: weeklyQtyMap[name] }));
-      const mostUsed = Object.keys(mostUsedMap)
-        .map(name => ({ name, count: mostUsedMap[name] }))
-        .sort((a, b) => b.count - a.count)
-        .slice(0, 5);
-      const trend = days14.map(k => ({
-        date: k,
-        pct: dailySched[k] > 0 ? Math.round((dailyTaken[k] / dailySched[k]) * 100) : null
-      }));
-      const compliancePct = scheduledTotal30 > 0 ? Math.round((takenTotal30 / scheduledTotal30) * 100) : null;
-
-      adminStats = { totalUsers: users.length, uniqueMedicines, weeklyQuantities, compliancePct, trend, mostUsed };
-      adminLoading = false;
-      adminError = null;
-    } catch (e) {
-      console.error(e);
-      adminLoading = false;
-      adminError = 'Could not load admin data. Please try again.';
-    }
-    render();
-  }
-
-  function renderAdminDashboard() {
-    if (adminLoading) {
-      root.innerHTML = `<h1>💊 Admin Dashboard</h1><div class="loading">Loading data across all users…</div>`;
-      return;
-    }
-    if (adminError) {
-      root.innerHTML = `
-        <h1>💊 Admin Dashboard</h1>
-        <div class="error-box">${escapeHtml(adminError)}</div>
-        <button class="admin-back-btn" id="admin-back-btn">← Back to my medications</button>
-      `;
-      document.getElementById('admin-back-btn').onclick = closeAdminDashboard;
-      return;
-    }
-
-    const s = adminStats;
-
-    const uniqueMedsHtml = s.uniqueMedicines.length
-      ? `<ul style="margin:0;padding-left:20px;font-size:14px;">${s.uniqueMedicines.map(m => `<li>${escapeHtml(m)}</li>`).join('')}</ul>`
-      : `<div class="empty">No medicines recorded yet.</div>`;
-
-    const qtyRowsHtml = s.weeklyQuantities.length
-      ? s.weeklyQuantities.map(q => `<tr><td>${escapeHtml(q.name)}</td><td>${q.qty}</td><td>${q.qty}</td></tr>`).join('')
-      : `<tr><td colspan="3" style="color:var(--muted);">No scheduled medications yet.</td></tr>`;
-
-    const mostUsedHtml = s.mostUsed.length
-      ? `<ol style="margin:0;padding-left:20px;font-size:14px;">${s.mostUsed.map(m => `<li>${escapeHtml(m.name)} — ${m.count} doses taken (last 30 days)</li>`).join('')}</ol>`
-      : `<div class="empty">No doses logged yet.</div>`;
-
-    const trendBarsHtml = s.trend.map(t => {
-      const height = t.pct === null ? 0 : t.pct;
-      const label = t.date.slice(5);
-      return `
-        <div class="trend-bar" title="${label}: ${t.pct === null ? 'no data' : t.pct + '%'}">
-          <div class="trend-bar-fill" style="height:${height}%;"></div>
-        </div>
-      `;
-    }).join('');
-
-    root.innerHTML = `
-      <h1>💊 Admin Dashboard</h1>
-      <div class="subtitle">Aggregated across everyone who has signed in and synced. Updates as users mark medications taken.</div>
-
-      <div class="stat-grid">
-        <div class="stat-box">
-          <div class="stat-num">${s.totalUsers}</div>
-          <div class="stat-label">Total users</div>
-        </div>
-        <div class="stat-box">
-          <div class="stat-num">${s.compliancePct === null ? '—' : s.compliancePct + '%'}</div>
-          <div class="stat-label">Compliance (30 days)</div>
-        </div>
-      </div>
-
-      <div class="section-label">Trend — daily compliance, last 14 days</div>
-      <div class="card">
-        <div class="trend-chart">${trendBarsHtml}</div>
-        <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--muted);margin-top:4px;">
-          <span>${s.trend[0] ? s.trend[0].date.slice(5) : ''}</span>
-          <span>${s.trend[s.trend.length - 1] ? s.trend[s.trend.length - 1].date.slice(5) : ''}</span>
-        </div>
-      </div>
-
-      <div class="section-label">Most used medicines (last 30 days)</div>
-      <div class="card">${mostUsedHtml}</div>
-
-      <div class="section-label">Unique medicines tracked</div>
-      <div class="card">${uniqueMedsHtml}</div>
-
-      <div class="section-label">Medicine quantity needed per week</div>
-      <div class="card">
-        <table class="admin-table">
-          <thead><tr><th>Medicine</th><th>This week</th><th>Next week</th></tr></thead>
-          <tbody>${qtyRowsHtml}</tbody>
-        </table>
-        <div style="font-size:11px;color:var(--muted);margin-top:8px;">
-          Assumes each medication's current schedule (daily or specific days) stays the same next week. "Quantity" means doses, not pill count — dose sizes (mg) aren't standardized across users.
-        </div>
-      </div>
-
-      <button class="admin-back-btn" id="admin-back-btn">← Back to my medications</button>
-    `;
-    document.getElementById('admin-back-btn').onclick = closeAdminDashboard;
-  }
-
-  /* ================================================================
-     ADMIN MODULE END
-     ================================================================ */
 
   window.__medApp = {
     markTaken, undoTaken, deleteMedication, signIn, switchAccount, signOut,
-    toggleDay: toggleNewMedDay, setFrequency: setNewMedFrequency,
-    openAdminDashboard, closeAdminDashboard
+    toggleDay: toggleNewMedDay, setFrequency: setNewMedFrequency
   };
 
   initGoogle();
